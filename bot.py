@@ -149,7 +149,7 @@ def send_post_with_chart(text):
     if len(text) <= 1024 and os.path.exists(CHART_FILE):
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
         with open(CHART_FILE, "rb") as photo:
-            requests.post(
+            res = requests.post(
                 url,
                 data={"chat_id": CHANNEL_ID, "caption": text, "parse_mode": "HTML"},
                 files={"photo": photo},
@@ -162,10 +162,15 @@ def send_post_with_chart(text):
                 requests.post(url_photo, data={"chat_id": CHANNEL_ID}, files={"photo": photo}, timeout=20)
 
         url_msg = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(
+        res = requests.post(
             url_msg,
             json={"chat_id": CHANNEL_ID, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True},
             timeout=20
+        )
+
+    print("Ответ от Telegram:", res.text)
+    if not res.ok:
+        raise RuntimeError(f"Ошибка доставки в Telegram: {res.text}")
         )
 
 if __name__ == "__main__":
