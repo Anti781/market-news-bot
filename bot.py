@@ -103,6 +103,7 @@ def get_fresh_news(seen_links):
 
     return fresh_items[:8], new_links
 
+
 def generate_russian_post(prices, fresh_news):
     client = genai.Client(api_key=GEMINI_API_KEY)
     news_block = "\n".join(fresh_news)
@@ -125,8 +126,21 @@ def generate_russian_post(prices, fresh_news):
        - Каждое предложение и каждый пункт обязательно заканчивай точкой.
     Используй только базовые HTML-теги Telegram: <b> и <i>.
     """
+
+    # Автоматически ищем рабочую модель Flash для вашего API-ключа
+    target_model = None
+    for m in client.models.list():
+        name = m.name.replace("models/", "")
+        if "flash" in name.lower() and "2.5" not in name.lower() and "vision" not in name.lower():
+            target_model = name
+            break
+
+    if not target_model:
+        target_model = "gemini-flash-latest"
+
+    print(f"Выбрана доступная модель: {target_model}")
     response = client.models.generate_content(
-        model="gemini-3.0-flash",
+        model=target_model,
         contents=prompt
     )
     return response.text.strip()
