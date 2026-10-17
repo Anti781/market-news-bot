@@ -126,7 +126,7 @@ def generate_russian_post(prices, fresh_news):
     Используй только базовые HTML-теги Telegram: <b> и <i>.
     """
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-3.0-flash",
         contents=prompt
     )
     return response.text.strip()
