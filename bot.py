@@ -103,7 +103,6 @@ def get_fresh_news(seen_links):
 
     return fresh_items[:8], new_links
 
-
 def generate_russian_post(prices, fresh_news):
     client = genai.Client(api_key=GEMINI_API_KEY)
     news_block = "\n".join(fresh_news)
@@ -127,7 +126,6 @@ def generate_russian_post(prices, fresh_news):
     Используй только базовые HTML-теги Telegram: <b> и <i>.
     """
 
-    # Автоматически ищем рабочую модель Flash для вашего API-ключа
     target_model = None
     for m in client.models.list():
         name = m.name.replace("models/", "")
@@ -171,16 +169,17 @@ def send_post_with_chart(text):
     print("Ответ от Telegram:", res.text)
     if not res.ok:
         raise RuntimeError(f"Ошибка доставки в Telegram: {res.text}")
-        )
 
 if __name__ == "__main__":
     seen = load_seen_news()
     fresh_news, new_links = get_fresh_news(seen)
 
+    # Для теста: если все новости уже записаны в seen_news.json, все равно берем свежие
     if not fresh_news:
-        print("Новых уникальных новостей пока нет, пропускаем выпуск.")
-    else:
-        prices = get_market_data_and_chart()
-        post_text = generate_russian_post(prices, fresh_news)
-        send_post_with_chart(post_text)
-        save_seen_news(seen + new_links)
+        print("Новых ссылок нет, берем последние новости для проверки связи.")
+        fresh_news, new_links = get_fresh_news([])
+
+    prices = get_market_data_and_chart()
+    post_text = generate_russian_post(prices, fresh_news)
+    send_post_with_chart(post_text)
+    save_seen_news(seen + new_links)
