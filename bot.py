@@ -1,4 +1,6 @@
 import os
+import re
+import time
 import json
 import feedparser
 import requests
@@ -103,6 +105,11 @@ def get_fresh_news(seen_links):
 
     return fresh_items[:8], new_links
 
+def clean_telegram_html(text):
+    text = text.replace("```html", "").replace("```", "").strip()
+    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
+    return text
+
 def generate_russian_post(prices, fresh_news):
     client = genai.Client(api_key=GEMINI_API_KEY)
     news_block = "\n".join(fresh_news)
@@ -123,25 +130,39 @@ def generate_russian_post(prices, fresh_news):
        - Блок котировок.
        - 3 коротких абзаца с главными новостями и их влиянием на рынок.
        - Каждое предложение и каждый пункт обязательно заканчивай точкой.
-    Используй только базовые HTML-теги Telegram: <b> и <i>.
+    Используй ТОЛЬКО закрытые HTML-теги <b>...</b> и <i>...</i>. Не используй символы < и > вне этих тегов.
     """
 
-    target_model = None
+    # Собираем список всех подходящих моделей (чтобы при перегрузке 503 сразу брать резервную)
+    candidate_models = []
     for m in client.models.list():
         name = m.name.replace("models/", "")
-        if "flash" in name.lower() and "2.5" not in name.lower() and "vision" not in name.lower():
-            target_model = name
-            break
+        low = name.lower()
+        if ("flash" in low or "pro" in low) and "2.5" not in low and "vision" not in low and "image" not in low and "tts" not in low and "audio" not in low:
+            candidate_models.append(name)
 
-    if not target_model:
-        target_model = "gemini-flash-latest"
+    if not candidate_models:
+        candidate_models = ["gemini-flash-latest", "gemini-flash-lite-latest"]
 
-    print(f"Выбрана доступная модель: {target_model}")
-    response = client.models.generate_content(
-        model=target_model,
-        contents=prompt
-    )
-    return response.text.strip()
+    print("Доступные модели для генерации:", candidate_models)
+
+    # Пробуем модели по очереди (до 3 кругов с паузой при пиковой нагрузке 503)
+    for round_num in range(3):
+        for model_name in candidate_models:
+            try:
+                print(f"Попытка генерации через {model_name} (круг {round_num + 1})...")
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt
+                )
+                if response and response.text:
+                    return clean_telegram_html(response.text)
+            except Exception as e:
+                print(f"Модель {model_name} временно недоступна: {e}")
+                time.sleep(5)
+        time.sleep(15)
+
+    raise RuntimeError("Все модели Gemini временно перегружены.")
 
 def send_post_with_chart(text):
     if len(text) <= 1024 and os.path.exists(CHART_FILE):
@@ -153,6 +174,15 @@ def send_post_with_chart(text):
                 files={"photo": photo},
                 timeout=20
             )
+        if not res.ok and "can't parse entities" in res.text:
+            plain_text = re.sub(r"<[^>]+>", "", text)
+            with open(CHART_FILE, "rb") as photo:
+                res = requests.post(
+                    url,
+                    data={"chat_id": CHANNEL_ID, "caption": plain_text},
+                    files={"photo": photo},
+                    timeout=20
+                )
     else:
         if os.path.exists(CHART_FILE):
             url_photo = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
@@ -165,6 +195,13 @@ def send_post_with_chart(text):
             json={"chat_id": CHANNEL_ID, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True},
             timeout=20
         )
+        if not res.ok and "can't parse entities" in res.text:
+            plain_text = re.sub(r"<[^>]+>", "", text)
+            res = requests.post(
+                url_msg,
+                json={"chat_id": CHANNEL_ID, "text": plain_text, "disable_web_page_preview": True},
+                timeout=20
+            )
 
     print("Ответ от Telegram:", res.text)
     if not res.ok:
@@ -174,12 +211,10 @@ if __name__ == "__main__":
     seen = load_seen_news()
     fresh_news, new_links = get_fresh_news(seen)
 
-    # Для теста: если все новости уже записаны в seen_news.json, все равно берем свежие
     if not fresh_news:
-        print("Новых ссылок нет, берем последние новости для проверки связи.")
-        fresh_news, new_links = get_fresh_news([])
-
-    prices = get_market_data_and_chart()
-    post_text = generate_russian_post(prices, fresh_news)
-    send_post_with_chart(post_text)
-    save_seen_news(seen + new_links)
+        print("Новых уникальных новостей пока нет, пропускаем выпуск.")
+    else:
+        prices = get_market_data_and_chart()
+        post_text = generate_russian_post(prices, fresh_news)
+        send_post_with_chart(post_text)
+        save_seen_news(seen + new_links)
